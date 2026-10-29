@@ -1,5 +1,6 @@
+
 import { NextRequest, NextResponse } from "next/server";
-import pool  from "@/lib/mysql";
+import pool from "@/lib/mysql";
 import type { RowDataPacket } from "mysql2";
 
 type RentalRow = RowDataPacket & {
@@ -20,6 +21,14 @@ type RentalRow = RowDataPacket & {
 type IdRow = RowDataPacket & {
   id: number;
 };
+
+type VehicleRateRow = RowDataPacket & {
+  id: number;
+  Base_Rate: number | string;
+};
+
+// Pricing observed from the existing project data.
+const DISTANCE_RATE_PER_KM = 2.5;
 
 // GET /api/rentals
 export async function GET() {
@@ -63,7 +72,9 @@ export async function GET() {
 
 // POST /api/rentals
 export async function POST(request: NextRequest) {
-  let connection;
+  let connection:
+    | Awaited<ReturnType<typeof pool.getConnection>>
+    | undefined;
 
   try {
     const body = await request.json();
@@ -110,7 +121,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "Use valid startDate and endDate values in YYYY-MM-DD format.",
+          error:
+            "Use valid startDate and endDate values in YYYY-MM-DD format.",
         },
         { status: 400 }
       );
@@ -137,7 +149,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "Pickup and drop locations are required (maximum 50 characters).",
+          error:
+            "Pickup and drop locations are required (maximum 50 characters).",
         },
         { status: 400 }
       );
@@ -146,7 +159,7 @@ export async function POST(request: NextRequest) {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    // Lock the customer record and verify it exists.
+    // Verify that the customer exists.
     const [customers] = await connection.execute<IdRow[]>(
       `SELECT Customer_ID AS id
        FROM Customer
@@ -164,9 +177,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Lock the vehicle record to coordinate concurrent bookings.
-    const [vehicles] = await connection.execute<IdRow[]>(
-      `SELECT Vehicle_ID AS id
+    // Lock the vehicle and read its real daily rate.
+    const [vehicles] = await connection.execute<VehicleRateRow[]>(
+      `SELECT Vehicle_ID AS id, Base_Rate
        FROM Vehicle
        WHERE Vehicle_ID = ?
        FOR UPDATE`,
@@ -182,7 +195,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Reject bookings that overlap existing rentals.
+    const dailyRate = Number(vehicles[0].Base_Rate);
+
+    if (!Number.isFinite(dailyRate) || dailyRate < 0) {
+      await connection.rollback();
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: "The selected vehicle has an invalid base rate.",
+        },
+        { status: 500 }
+      );
+    }
+
+    // Prevent overlapping bookings for the same vehicle.
     const [conflicts] = await connection.execute<RowDataPacket[]>(
       `SELECT Rental_ID
        FROM Rental
@@ -205,15 +232,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate an ID while holding a lock on the vehicle.
-    // Every rental for this vehicle uses the same lock.
-    const [maxRows] = await connection.execute<IdRow[]>(
+    // Generate a rental ID.
+    const [maxRentalRows] = await connection.execute<IdRow[]>(
       `SELECT COALESCE(MAX(Rental_ID), 0) + 1 AS id
        FROM Rental
        FOR UPDATE`
     );
 
-    const rentalId = Number(maxRows[0].id);
+    const rentalId = Number(maxRentalRows[0].id);
 
     await connection.execute(
       `INSERT INTO Rental (
@@ -238,13 +264,77 @@ export async function POST(request: NextRequest) {
       ]
     );
 
+    // Calculate the base charge from the actual rental dates.
+    // Same-day rentals count as one rental day.
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    const end = new Date(`${endDate}T00:00:00.000Z`);
+
+    const rentalDays = Math.max(
+      1,
+      Math.round((end.getTime() - start.getTime()) / 86400000)
+    );
+
+    const baseAmount = Number((dailyRate * rentalDays).toFixed(2));
+
+    // Distance is unknown at creation time, so do not invent it.
+    const distanceCharge = 0;
+    const penaltyCharge = 0;
+    const totalAmount = Number(
+      (baseAmount + distanceCharge + penaltyCharge).toFixed(2)
+    );
+
+    // Generate a bill ID. The current schema does not use AUTO_INCREMENT.
+    const [maxBillRows] = await connection.execute<IdRow[]>(
+      `SELECT COALESCE(MAX(Bill_ID), 0) + 1 AS id
+       FROM Bill
+       FOR UPDATE`
+    );
+
+    const billId = Number(maxBillRows[0].id);
+
+    // Create the bill before committing the rental transaction.
+    await connection.execute(
+      `INSERT INTO Bill (
+        Bill_ID,
+        Rental_ID,
+        Base_Amount,
+        Distance_Charge,
+        Penalty_Charge,
+        Total_Amount,
+        Payment_Date,
+        Payment_Status
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'Pending')`,
+      [
+        billId,
+        rentalId,
+        baseAmount,
+        distanceCharge,
+        penaltyCharge,
+        totalAmount,
+      ]
+    );
+
+    // Rental and bill are saved together.
     await connection.commit();
 
     return NextResponse.json(
       {
         success: true,
-        message: "Rental created successfully.",
+        message: "Rental and bill created successfully.",
         rentalId,
+        billId,
+        billing: {
+          rentalDays,
+          dailyRate,
+          baseAmount,
+          distanceCharge,
+          penaltyCharge,
+          totalAmount,
+          paymentStatus: "Pending",
+          paymentDate: null,
+          distanceRatePerKm: DISTANCE_RATE_PER_KM,
+          distancePending: true,
+        },
       },
       { status: 201 }
     );

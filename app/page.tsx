@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Tab = "Overview" | "Vehicles" | "Rentals" | "Telemetry" | "Billing";
 
@@ -20,47 +21,62 @@ type DashboardData = {
   totalRentals: number;
   totalBills: number;
   pendingPayments: number | string;
+  fleetStatus: {
+    currentlyRented: number;
+    notCurrentlyRented: number;
+    utilizationPercent: number;
+  };
+};
+
+type Customer = {
+  Customer_ID: number;
+  First_Name: string;
+  Last_Name: string;
+  Email: string | null;
 };
 
 export default function Home() {
+  const router = useRouter();
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState<{ username: string; role: "Admin" | "Staff" } | null>(null);
-  const [loginUsername, setLoginUsername] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [loginSubmitting, setLoginSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch("/api/auth/me", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => { if (d.success && d.user) setAuthUser(d.user); })
-      .catch(() => {})
-      .finally(() => setAuthLoading(false));
-  }, []);
+    let cancelled = false;
 
-  async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setLoginError("");
-    setLoginSubmitting(true);
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: loginUsername, password: loginPassword }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || "Login failed.");
-      window.location.reload();
-    } catch (err) {
-      setLoginError(err instanceof Error ? err.message : "Unable to sign in.");
-    } finally {
-      setLoginSubmitting(false);
+    async function checkSession() {
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store" });
+        const data = await response.json();
+
+        if (cancelled) return;
+
+        // The /api/auth/me route returns { user } when authenticated.
+        if (response.ok && data.user) {
+          setAuthUser(data.user);
+        } else {
+          router.replace("/login");
+        }
+      } catch {
+        if (!cancelled) router.replace("/login");
+      } finally {
+        if (!cancelled) setAuthLoading(false);
+      }
     }
-  }
+
+    void checkSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.reload();
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      setAuthUser(null);
+      router.replace("/login");
+      router.refresh();
+    }
   }
 
   const [activeTab, setActiveTab] = useState<Tab>("Overview");
@@ -83,10 +99,14 @@ export default function Home() {
   const [dbBills, setDbBills] = useState<any[]>([]);
   const [billsLoading, setBillsLoading] = useState(false);
   const [billsError, setBillsError] = useState("");
+  const [updatingBillId, setUpdatingBillId] = useState<number | null>(null);
   const [telemetry, setTelemetry] = useState<any[]>([]);
   const [telemetryLoading, setTelemetryLoading] = useState(false);
   const [telemetryError, setTelemetryError] = useState("");
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customersError, setCustomersError] = useState("");
 
   useEffect(() => {
     setCurrentDate(new Date().toLocaleDateString("en-IN", {
@@ -116,6 +136,11 @@ export default function Home() {
             totalRentals: Number(data.totalRentals),
             totalBills: Number(data.totalBills),
             pendingPayments: Number(data.pendingPayments),
+            fleetStatus: {
+              currentlyRented: Number(data.fleetStatus?.currentlyRented ?? 0),
+              notCurrentlyRented: Number(data.fleetStatus?.notCurrentlyRented ?? 0),
+              utilizationPercent: Number(data.fleetStatus?.utilizationPercent ?? 0),
+            },
           });
         }
       } catch (error) {
@@ -177,6 +202,41 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCustomers() {
+      try {
+        setCustomersLoading(true);
+        setCustomersError("");
+
+        const response = await fetch("/api/customers", { cache: "no-store" });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Unable to load customers.");
+        }
+
+        if (!cancelled) {
+          setCustomers(Array.isArray(data.customers) ? data.customers : []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCustomersError(
+            error instanceof Error ? error.message : "Unable to load customers."
+          );
+        }
+      } finally {
+        if (!cancelled) setCustomersLoading(false);
+      }
+    }
+
+    void loadCustomers();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function loadRentals() {
     setRentalsLoading(true);
     setRentalsError("");
@@ -201,6 +261,58 @@ export default function Home() {
     } catch (error) {
       setBillsError(error instanceof Error ? error.message : "Could not load billing records.");
     } finally { setBillsLoading(false); }
+  }
+
+  async function updateBill(billId: number, status: "Paid" | "Pending") {
+    const confirmed = window.confirm(
+      status === "Paid"
+        ? `Confirm that payment for Bill #${billId} has been received?`
+        : `Mark Bill #${billId} as Pending / unpaid?`
+    );
+    if (!confirmed) return;
+
+    setUpdatingBillId(billId);
+    setBillsError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/billing", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ billId, status }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Could not update payment status.");
+      }
+
+      setNotice(result.message || `Bill #${billId} updated to ${status}.`);
+      await loadBills();
+
+      // Refresh the dashboard totals so Pending Payments reflects this update.
+      const dashboardResponse = await fetch("/api/dashboard", { cache: "no-store" });
+      const dashboard = await dashboardResponse.json();
+      if (dashboardResponse.ok && dashboard.success) {
+        setDashboardData({
+          totalVehicles: Number(dashboard.totalVehicles),
+          totalRentals: Number(dashboard.totalRentals),
+          totalBills: Number(dashboard.totalBills),
+          pendingPayments: Number(dashboard.pendingPayments),
+          fleetStatus: {
+            currentlyRented: Number(dashboard.fleetStatus?.currentlyRented ?? 0),
+            notCurrentlyRented: Number(dashboard.fleetStatus?.notCurrentlyRented ?? 0),
+            utilizationPercent: Number(dashboard.fleetStatus?.utilizationPercent ?? 0),
+          },
+        });
+      }
+    } catch (error) {
+      setBillsError(
+        error instanceof Error ? error.message : "Unable to update payment status."
+      );
+    } finally {
+      setUpdatingBillId(null);
+    }
   }
 
   async function loadTelemetry() {
@@ -276,28 +388,10 @@ export default function Home() {
     },
   ];
 
-  if (authLoading) {
-    return <main className="flex min-h-screen items-center justify-center bg-[#f5f7fb] text-slate-600">Checking your ROADWISE session...</main>;
-  }
-
-  if (!authUser) {
+  if (authLoading || !authUser) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#f5f7fb] p-5 text-slate-800">
-        <form onSubmit={handleLogin} className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-xl">
-          <div className="mb-6 flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-400 text-2xl font-bold text-[#111c35]">R</div>
-            <div><h1 className="text-2xl font-bold text-slate-900">ROADWISE</h1><p className="text-sm text-slate-500">Fleet Intelligence · Secure sign in</p></div>
-          </div>
-          <label className="mb-4 block text-sm font-medium">Username
-            <input required autoComplete="username" value={loginUsername} onChange={(e) => setLoginUsername(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-3 outline-none focus:border-cyan-500" />
-          </label>
-          <label className="mb-4 block text-sm font-medium">Password
-            <input required type="password" autoComplete="current-password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-3 outline-none focus:border-cyan-500" />
-          </label>
-          {loginError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{loginError}</p>}
-          <button disabled={loginSubmitting} type="submit" className="w-full rounded-xl bg-[#172541] px-4 py-3 font-semibold text-white disabled:opacity-60">{loginSubmitting ? "Signing in..." : "Sign in"}</button>
-          <p className="mt-4 text-xs leading-5 text-slate-500">Use an account created in the App_User table. Passwords are stored as bcrypt hashes.</p>
-        </form>
+      <main className="flex min-h-screen items-center justify-center bg-[#f5f7fb] text-slate-600">
+        {authLoading ? "Checking your ROADWISE session..." : "Redirecting to login..."}
       </main>
     );
   }
@@ -322,7 +416,7 @@ export default function Home() {
             </p>
 
             <nav className="space-y-1">
-              {navItems.filter((item) => authUser.role === "Admin" || item.name !== "Billing").map((item) => (
+              {navItems.map((item) => (
                 <button
                   key={item.name}
                   onClick={() => changeTab(item.name)}
@@ -336,7 +430,18 @@ export default function Home() {
                   {item.name}
 
                   {item.name === "Telemetry" && (
-                    <span className="ml-auto h-2 w-2 rounded-full bg-emerald-400" />
+                    <span
+                      title={telemetryError ? "Telemetry disconnected" : telemetry.length > 0 ? "Telemetry data loaded" : telemetryLoading ? "Checking telemetry" : "Telemetry not checked"}
+                      className={`ml-auto h-2 w-2 rounded-full ${
+                        telemetryError
+                          ? "bg-red-400"
+                          : telemetryLoading
+                            ? "bg-amber-400"
+                            : telemetry.length > 0
+                              ? "bg-emerald-400"
+                              : "bg-slate-500"
+                      }`}
+                    />
                   )}
                 </button>
               ))}
@@ -346,7 +451,7 @@ export default function Home() {
           <div className="mt-auto p-4">
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span className={`h-2 w-2 rounded-full ${dashboardError ? "bg-red-400" : dashboardLoading ? "bg-amber-400" : dashboardData ? "bg-emerald-400" : "bg-slate-400"}`} />
                 System status
               </div>
               <p className="text-xs leading-5 text-slate-400">
@@ -363,8 +468,8 @@ export default function Home() {
                 A
               </div>
               <div>
-                <p className="text-sm font-medium">Admin User</p>
-                <p className="text-xs text-slate-400">Fleet administrator</p>
+                <p className="text-sm font-medium">{authUser.username}</p>
+                <p className="text-xs text-slate-400">{authUser.role === "Admin" ? "Fleet administrator" : "Fleet staff"}</p>
               </div>
             </div>
           </div>
@@ -385,13 +490,21 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="hidden items-center gap-2 rounded-full bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 sm:flex">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Demo mode
+              <span className={`hidden items-center gap-2 rounded-full px-3 py-2 text-xs font-medium sm:flex ${
+                dashboardError
+                  ? "bg-red-50 text-red-700"
+                  : dashboardLoading
+                    ? "bg-amber-50 text-amber-700"
+                    : "bg-emerald-50 text-emerald-700"
+              }`}>
+                <span className={`h-2 w-2 rounded-full ${
+                  dashboardError ? "bg-red-500" : dashboardLoading ? "bg-amber-500" : "bg-emerald-500"
+                }`} />
+                {dashboardError ? "Database error" : dashboardLoading ? "Connecting..." : "Database connected"}
               </span>
 
               <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 sm:inline">{authUser.username} · {authUser.role}</span>
-              {authUser.role === "Admin" && <button onClick={() => changeTab("Billing")} className="hidden rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold sm:inline">Billing</button>}
+              <button onClick={() => changeTab("Billing")} className="hidden rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold sm:inline">Billing</button>
               <button onClick={handleLogout} className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">Log out</button>
               <button
                 onClick={() => setShowBooking(true)}
@@ -482,91 +595,88 @@ export default function Home() {
                   <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm xl:col-span-2">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <h2 className="font-bold text-slate-900">
-                          Fleet utilization
-                        </h2>
+                        <h2 className="font-bold text-slate-900">Fleet utilization</h2>
                         <p className="mt-1 text-sm text-slate-500">
-                          Illustrative distribution of 24 vehicles
+                          Calculated from current MySQL rental records
                         </p>
                       </div>
                       <span className="rounded-lg bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700">
-                        54% utilized
+                        {dashboardLoading ? "..." : dashboardError || !dashboardData ? "Unavailable" : `${dashboardData.fleetStatus.utilizationPercent}% utilized`}
                       </span>
                     </div>
 
-                    <div className="mt-7 flex h-44 items-end gap-3 sm:gap-5">
-                      {[42, 66, 53, 78, 61, 88, 70, 57, 82, 64, 91, 72].map(
-                        (height, i) => (
+                    {dashboardLoading ? (
+                      <p className="mt-7 text-sm text-slate-500">Loading fleet data...</p>
+                    ) : dashboardError || !dashboardData ? (
+                      <p className="mt-7 text-sm text-red-600">Fleet utilization could not be loaded.</p>
+                    ) : dashboardData.totalVehicles === 0 ? (
+                      <p className="mt-7 text-sm text-slate-500">No vehicles are registered in MySQL yet.</p>
+                    ) : (
+                      <>
+                        <div className="mt-7 h-4 overflow-hidden rounded-full bg-slate-100">
                           <div
-                            key={i}
-                            className="flex h-full flex-1 flex-col justify-end"
-                          >
-                            <div
-                              className="w-full rounded-t-lg bg-gradient-to-t from-blue-700 to-cyan-400"
-                              style={{ height: `${height}%` }}
-                            />
-                          </div>
-                        )
-                      )}
-                    </div>
-
-                    <div className="mt-3 flex justify-between text-xs text-slate-400">
-                      <span>10 AM</span>
-                      <span>12 PM</span>
-                      <span>2 PM</span>
-                      <span>4 PM</span>
-                      <span>6 PM</span>
-                      <span>8 PM</span>
-                    </div>
+                            className="h-full rounded-full bg-gradient-to-r from-blue-700 to-cyan-400 transition-all"
+                            style={{ width: `${Math.min(100, Math.max(0, dashboardData.fleetStatus.utilizationPercent))}%` }}
+                          />
+                        </div>
+                        <div className="mt-4 flex flex-wrap justify-between gap-2 text-sm text-slate-500">
+                          <span>{dashboardData.fleetStatus.currentlyRented} currently rented</span>
+                          <span>{dashboardData.totalVehicles} total vehicles</span>
+                        </div>
+                        <p className="mt-4 text-xs text-slate-400">
+                          Based on rental dates including today. Historical hourly utilization is not stored.
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
                     <h2 className="font-bold text-slate-900">Fleet status</h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Illustrative sample distribution
+                      Derived from current rental dates
                     </p>
 
                     <div className="mt-6 space-y-5">
                       {[
                         {
-                          label: "Available",
-                          value: 13,
-                          width: "54%",
-                          color: "bg-emerald-500",
-                        },
-                        {
-                          label: "On trip",
-                          value: 8,
-                          width: "33%",
+                          label: "Currently rented",
+                          value: dashboardData?.fleetStatus.currentlyRented ?? 0,
                           color: "bg-blue-500",
                         },
                         {
-                          label: "Maintenance",
-                          value: 3,
-                          width: "13%",
-                          color: "bg-amber-400",
+                          label: "Not currently rented",
+                          value: dashboardData?.fleetStatus.notCurrentlyRented ?? 0,
+                          color: "bg-emerald-500",
                         },
-                      ].map((item) => (
-                        <div key={item.label}>
-                          <div className="mb-2 flex justify-between text-sm">
-                            <span className="text-slate-600">
-                              {item.label}
-                            </span>
-                            <span className="font-semibold">{item.value}</span>
+                      ].map((item) => {
+                        const total = dashboardData?.totalVehicles ?? 0;
+                        const width = total > 0 ? Math.round((item.value / total) * 100) : 0;
+
+                        return (
+                          <div key={item.label}>
+                            <div className="mb-2 flex justify-between text-sm">
+                              <span className="text-slate-600">{item.label}</span>
+                              <span className="font-semibold">
+                                {dashboardLoading ? "..." : dashboardError ? "—" : item.value}
+                              </span>
+                            </div>
+                            <div className="h-2 rounded-full bg-slate-100">
+                              <div
+                                className={`h-2 rounded-full ${item.color}`}
+                                style={{ width: `${dashboardLoading || dashboardError ? 0 : width}%` }}
+                              />
+                            </div>
                           </div>
-                          <div className="h-2 rounded-full bg-slate-100">
-                            <div
-                              className={`h-2 rounded-full ${item.color}`}
-                              style={{ width: item.width }}
-                            />
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
 
+                    <p className="mt-5 text-xs text-slate-400">
+                      Maintenance status is not available in the current Vehicle schema.
+                    </p>
                     <button
                       onClick={() => changeTab("Vehicles")}
-                      className="mt-7 w-full rounded-xl border border-slate-200 py-3 text-sm font-semibold hover:bg-slate-50"
+                      className="mt-5 w-full rounded-xl border border-slate-200 py-3 text-sm font-semibold hover:bg-slate-50"
                     >
                       View fleet →
                     </button>
@@ -710,7 +820,17 @@ export default function Home() {
                 {rentalsError && <p role="alert" className="m-6 rounded-xl bg-red-50 p-4 text-sm text-red-700">{rentalsError}</p>}
                 {!rentalsLoading && !rentalsError && <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-400"><tr><th className="px-6 py-4">Rental ID</th><th className="px-6 py-4">Customer</th><th className="px-6 py-4">Vehicle</th><th className="px-6 py-4">Dates</th><th className="px-6 py-4">Distance</th><th className="px-6 py-4">Status</th></tr></thead>
-                  <tbody>{dbRentals.map((r) => <tr key={r.Rental_ID} className="border-t border-slate-100"><td className="px-6 py-4 font-semibold">#{r.Rental_ID}</td><td className="px-6 py-4">{[r.First_Name, r.Last_Name].filter(Boolean).join(" ") || `Customer ${r.Customer_ID}`}</td><td className="px-6 py-4">{r.Model || `Vehicle ${r.Vehicle_ID}`}<p className="text-xs text-slate-400">{r.Registration_No || ""}</p></td><td className="px-6 py-4">{String(r.Start_Date).slice(0,10)} – {r.End_Date ? String(r.End_Date).slice(0,10) : "Open"}</td><td className="px-6 py-4">{r.Total_Distance ?? 0} km</td><td className="px-6 py-4"><span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">Recorded</span></td></tr>)}
+                  <tbody>{dbRentals.map((r) => <tr key={r.Rental_ID} className="border-t border-slate-100"><td className="px-6 py-4 font-semibold">#{r.Rental_ID}</td><td className="px-6 py-4">{[r.First_Name, r.Last_Name].filter(Boolean).join(" ") || `Customer ${r.Customer_ID}`}</td><td className="px-6 py-4">{r.Model || `Vehicle ${r.Vehicle_ID}`}<p className="text-xs text-slate-400">{r.Registration_No || ""}</p></td><td className="px-6 py-4">{String(r.Start_Date).slice(0,10)} – {r.End_Date ? String(r.End_Date).slice(0,10) : "Open"}</td><td className="px-6 py-4">{r.Total_Distance ?? 0} km</td><td className="px-6 py-4"><span className={`rounded-full px-3 py-1 text-xs font-medium ${
+  new Date(String(r.Start_Date).slice(0, 10) + "T00:00:00") > new Date()
+    ? "bg-violet-50 text-violet-700"
+    : r.End_Date && new Date(String(r.End_Date).slice(0, 10) + "T23:59:59") < new Date()
+      ? "bg-slate-100 text-slate-600"
+      : "bg-emerald-50 text-emerald-700"
+}`}>{new Date(String(r.Start_Date).slice(0, 10) + "T00:00:00") > new Date()
+  ? "Upcoming"
+  : r.End_Date && new Date(String(r.End_Date).slice(0, 10) + "T23:59:59") < new Date()
+    ? "Completed"
+    : "Active"}</span></td></tr>)}
                   {dbRentals.length === 0 && <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-500">No rental records found.</td></tr>}</tbody>
                 </table></div>}
               </div>
@@ -730,7 +850,54 @@ export default function Home() {
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-6"><div><h2 className="font-bold text-slate-900">Billing &amp; payments</h2><p className="mt-1 text-sm text-slate-500">Invoice records loaded from MySQL.</p></div><button onClick={() => void loadBills()} className="rounded-lg border px-3 py-2 text-sm font-semibold">Refresh</button></div>
                 {billsLoading && <p className="p-6 text-sm text-slate-500">Loading bills...</p>}
                 {billsError && <p role="alert" className="m-6 rounded-xl bg-red-50 p-4 text-sm text-red-700">{billsError} Ensure the /api/billing route is configured.</p>}
-                {!billsLoading && !billsError && <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-400"><tr><th className="px-6 py-4">Bill ID</th><th className="px-6 py-4">Rental ID</th><th className="px-6 py-4">Total amount</th><th className="px-6 py-4">Payment date</th><th className="px-6 py-4">Payment status</th></tr></thead><tbody>{dbBills.map((b) => <tr key={b.Bill_ID} className="border-t border-slate-100"><td className="px-6 py-4 font-semibold">#{b.Bill_ID}</td><td className="px-6 py-4">#{b.Rental_ID}</td><td className="px-6 py-4 font-semibold">₹{Number(b.Total_Amount || 0).toLocaleString("en-IN")}</td><td className="px-6 py-4">{b.Payment_Date ? String(b.Payment_Date).slice(0,10) : "—"}</td><td className="px-6 py-4"><span className={`rounded-full px-3 py-1 text-xs font-semibold ${String(b.Payment_Status).toLowerCase() === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{b.Payment_Status || "Unknown"}</span></td></tr>)}{dbBills.length === 0 && <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">No bill records found.</td></tr>}</tbody></table></div>}
+                {!billsLoading && !billsError && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[760px] text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-400">
+                        <tr>
+                          <th className="px-6 py-4">Bill ID</th>
+                          <th className="px-6 py-4">Rental ID</th>
+                          <th className="px-6 py-4">Total amount</th>
+                          <th className="px-6 py-4">Payment date</th>
+                          <th className="px-6 py-4">Payment status</th>
+                          <th className="px-6 py-4">Update payment</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dbBills.map((b) => {
+                          const isPaid = String(b.Payment_Status ?? "").toLowerCase() === "paid";
+                          const isUpdating = updatingBillId === Number(b.Bill_ID);
+                          return (
+                            <tr key={b.Bill_ID} className="border-t border-slate-100">
+                              <td className="px-6 py-4 font-semibold">#{b.Bill_ID}</td>
+                              <td className="px-6 py-4">#{b.Rental_ID}</td>
+                              <td className="px-6 py-4 font-semibold">₹{Number(b.Total_Amount || 0).toLocaleString("en-IN")}</td>
+                              <td className="px-6 py-4">{b.Payment_Date ? String(b.Payment_Date).slice(0, 10) : "—"}</td>
+                              <td className="px-6 py-4">
+                                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${isPaid ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                                  {b.Payment_Status || "Unknown"}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <button
+                                  type="button"
+                                  disabled={isUpdating}
+                                  onClick={() => void updateBill(Number(b.Bill_ID), isPaid ? "Pending" : "Paid")}
+                                  className={`rounded-lg px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${isPaid ? "border border-amber-200 text-amber-700 hover:bg-amber-50" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}
+                                >
+                                  {isUpdating ? "Updating..." : isPaid ? "Mark Unpaid" : "Mark Paid"}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {dbBills.length === 0 && (
+                          <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-500">No bill records found.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
@@ -803,8 +970,31 @@ export default function Home() {
                 }
               }}
             >
-              <label className="block text-sm font-medium text-slate-700">Customer ID
-                <input name="customerId" type="number" min="1" required className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-3 font-normal" placeholder="e.g. 101" />
+              <label className="block text-sm font-medium text-slate-700">Customer
+                <select
+                  name="customerId"
+                  required
+                  defaultValue=""
+                  disabled={customersLoading || customers.length === 0}
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 font-normal disabled:bg-slate-100"
+                >
+                  <option value="" disabled>
+                    {customersLoading
+                      ? "Loading customers..."
+                      : customers.length === 0
+                        ? "No customers available"
+                        : "Select a customer"}
+                  </option>
+                  {customers.map((customer) => (
+                    <option key={customer.Customer_ID} value={customer.Customer_ID}>
+                      {customer.First_Name} {customer.Last_Name} · ID {customer.Customer_ID}
+                      {customer.Email ? ` · ${customer.Email}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {customersError && (
+                  <span className="mt-1 block text-xs text-red-600">{customersError}</span>
+                )}
               </label>
               <label className="block text-sm font-medium text-slate-700">Vehicle
                 <select name="vehicleId" required defaultValue="" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 font-normal">
