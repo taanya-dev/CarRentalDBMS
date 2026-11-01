@@ -20,7 +20,7 @@ if (!telemetryDB.getCollectionNames().includes("telemetry_logs")) {
     telemetryDB.createCollection("telemetry_logs");
 }
 
-const telemetry = telemetryDB.collection("telemetry_logs");
+const telemetry = telemetryDB.getCollection("telemetry_logs");
 
 
 /* =====================================================
