@@ -1,36 +1,200 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🚗 Car Rental DBMS
 
-## Getting Started
+A full-stack Car Rental Management System built using **Next.js**, **TypeScript**, **MySQL**, and **MongoDB**. The application allows users to manage customers, vehicles, rentals, billing records, and vehicle telemetry through an interactive dashboard.
 
-First, run the development server:
+---
+
+## 📌 Features
+
+- Customer Management
+  - View all customers
+  - Add new customers
+  - Automatic Customer ID generation
+
+- Vehicle Management
+  - View available vehicles
+  - Vehicle availability validation
+  - Prevents double booking
+
+- Rental Management
+  - Create rental bookings
+  - Select customer and vehicle
+  - Start and end date selection
+  - Pickup and drop locations
+  - Rental history
+  - Active and Completed rental status
+
+- Billing
+  - Billing records stored in MySQL
+  - Dashboard summary
+
+- Telemetry
+  - Vehicle telemetry stored in MongoDB
+  - Dashboard integration
+
+- Authentication
+  - Login API
+  - Session-based authentication
+
+---
+
+## 🛠️ Tech Stack
+
+### Frontend
+- Next.js
+- React
+- TypeScript
+- CSS
+
+### Backend
+- Next.js API Routes
+- Node.js
+
+### Databases
+- MySQL 8.0
+- MongoDB
+
+### Packages
+- mysql2
+- mongodb
+- jose
+- bcryptjs
+
+---
+
+## 📂 Project Structure
+
+```
+app/
+│
+├── api/
+│   ├── auth/
+│   ├── billing/
+│   ├── customers/
+│   ├── dashboard/
+│   ├── rentals/
+│   ├── telemetry/
+│   └── vehicles/
+│
+├── page.tsx
+├── layout.tsx
+│
+lib/
+├── mongodb.ts
+└── mysql.ts
+
+public/
+
+01_create_schema.sql
+02_insert_sample_data.sql
+03_advanced_sql.sql
+04_ddl_demonstrations.sql
+05_mongodb_setup.js
+```
+
+---
+
+## ⚙️ Installation
+
+Clone the repository
+
+```bash
+git clone https://github.com/taanya-dev/CarRentalDBMS.git
+```
+
+Move into the project directory
+
+```bash
+cd CarRentalDBMS
+```
+
+Install dependencies
+
+```bash
+npm install
+```
+
+---
+
+## 🗄️ Database Setup
+
+### MySQL
+
+Create the database using:
+
+```bash
+01_create_schema.sql
+```
+
+Insert sample data:
+
+```bash
+02_insert_sample_data.sql
+```
+
+Optional SQL demonstrations:
+
+```bash
+03_advanced_sql.sql
+04_ddl_demonstrations.sql
+```
+
+### MongoDB
+
+Run:
+
+```bash
+05_mongodb_setup.js
+```
+
+to create the telemetry database and sample telemetry collection.
+
+---
+
+## ▶️ Running the Project
+
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## 📊 Main Modules
 
-To learn more about Next.js, take a look at the following resources:
+- Dashboard
+- Customer Management
+- Vehicle Management
+- Rental Management
+- Billing
+- Telemetry
+- Authentication
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 📋 Validation Implemented
 
-## Deploy on Vercel
+- Prevents booking an already rented vehicle.
+- Customer IDs are generated automatically.
+- Date validation for rentals.
+- Foreign key constraints in MySQL.
+- Rental history tracking.
+- Vehicle availability checking.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Car Rental DBMS Project
+
+Developed as part of the Database Management Systems course using Next.js, MySQL, and MongoDB.
+
+---
+
+## 📄 License
+
+This project is developed for educational purposes.
