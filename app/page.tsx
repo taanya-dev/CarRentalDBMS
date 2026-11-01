@@ -107,7 +107,14 @@ export default function Home() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [customersError, setCustomersError] = useState("");
-
+  const [showAddCustomer, setShowAddCustomer] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({
+  licenseNo: "",
+  firstName: "",
+  lastName: "",
+  email: "",
+});
+  
   useEffect(() => {
     setCurrentDate(new Date().toLocaleDateString("en-IN", {
       day: "numeric", month: "long", year: "numeric",
@@ -219,6 +226,7 @@ export default function Home() {
 
         if (!cancelled) {
           setCustomers(Array.isArray(data.customers) ? data.customers : []);
+          console.log("Customers received:", data.customers);
         }
       } catch (error) {
         if (!cancelled) {
@@ -841,7 +849,28 @@ export default function Home() {
                 <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-slate-900">Vehicle telemetry</h2><p className="mt-1 text-sm text-slate-500">Telemetry documents retrieved from MongoDB through the API.</p></div><button onClick={() => void loadTelemetry()} className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold">Refresh</button></div>
                 {telemetryLoading && <p className="rounded-xl border bg-white p-4 text-sm text-slate-500">Loading telemetry...</p>}
                 {telemetryError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{telemetryError} Ensure `/api/telemetry` is connected to MongoDB.</p>}
-                {!telemetryLoading && !telemetryError && <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm"><table className="w-full min-w-[650px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-400"><tr><th className="px-6 py-4">Vehicle / Device</th><th className="px-6 py-4">Location</th><th className="px-6 py-4">Speed</th><th className="px-6 py-4">Fuel</th><th className="px-6 py-4">Timestamp</th></tr></thead><tbody>{telemetry.map((t, i) => <tr key={t._id || i} className="border-t border-slate-100"><td className="px-6 py-4 font-semibold">{t.vehicle_id ?? t.Vehicle_ID ?? t.vehicleId ?? t.device_id ?? t.Device_ID ?? t.deviceId ?? "—"}</td><td className="px-6 py-4">{typeof t.location === "object" && t.location !== null ? (t.location.area ?? "Unknown location") : (t.GPS_Location ?? t.location ?? "—")}</td><td className="px-6 py-4">{t.speed_kmph ?? t.Speed ?? t.speed ?? "—"} km/h</td><td className="px-6 py-4">{t.fuel_level_percent ?? t.Fuel_Level ?? t.fuelLevel ?? "—"}%</td><td className="px-6 py-4">{(t.timestamp ?? t.TimeStamp) ? new Date(t.timestamp ?? t.TimeStamp).toLocaleString("en-IN") : "—"}</td></tr>)}{telemetry.length === 0 && <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">No telemetry documents returned.</td></tr>}</tbody></table></div>}
+                {!telemetryLoading && !telemetryError && <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm"><table className="w-full min-w-[650px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-400"><tr><th className="px-6 py-4">Vehicle / Device</th><th className="px-6 py-4">Location</th><th className="px-6 py-4">Speed</th><th className="px-6 py-4">Fuel</th><th className="px-6 py-4">Timestamp</th></tr></thead><tbody>{telemetry.map((t, i) => <tr key={t._id || i} className="border-t border-slate-100"><td className="px-6 py-4 font-semibold">{t.vehicle_id ?? t.Vehicle_ID ?? t.vehicleId ?? t.device_id ?? t.Device_ID ?? t.deviceId ?? "—"}</td><td className="px-6 py-4">
+  {typeof t.location === "object" && t.location !== null
+    ? (
+        t.location.label ??
+        t.location.area ??
+        t.location.city ??
+        t.location.address ??
+        (
+          (t.location.latitude ?? t.location.lat) &&
+          (t.location.longitude ?? t.location.lng)
+            ? `${t.location.latitude ?? t.location.lat}, ${t.location.longitude ?? t.location.lng}`
+            : "Unknown location"
+        )
+      )
+    : (t.GPS_Location ?? t.location ?? "—")}
+</td><td className="px-6 py-4">{t.speed_kmph ?? t.Speed ?? t.speed ?? "—"} km/h</td><td className="px-6 py-4">{
+  t.fuel_level ??
+  t.fuel_level_percent ??
+  t.Fuel_Level ??
+  t.fuelLevel ??
+  "—"
+}%</td><td className="px-6 py-4">{(t.timestamp ?? t.TimeStamp) ? new Date(t.timestamp ?? t.TimeStamp).toLocaleString("en-IN") : "—"}</td></tr>)}{telemetry.length === 0 && <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">No telemetry documents returned.</td></tr>}</tbody></table></div>}
               </div>
             )}
 
@@ -928,7 +957,7 @@ export default function Home() {
                 className="rounded-lg px-3 py-1 text-xl text-slate-400 hover:bg-slate-100"
                 aria-label="Close booking form"
               >
-                ×
+                x
               </button>
             </div>
 
@@ -970,32 +999,41 @@ export default function Home() {
                 }
               }}
             >
-              <label className="block text-sm font-medium text-slate-700">Customer
-                <select
-                  name="customerId"
-                  required
-                  defaultValue=""
-                  disabled={customersLoading || customers.length === 0}
-                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 font-normal disabled:bg-slate-100"
-                >
-                  <option value="" disabled>
-                    {customersLoading
-                      ? "Loading customers..."
-                      : customers.length === 0
-                        ? "No customers available"
-                        : "Select a customer"}
-                  </option>
-                  {customers.map((customer) => (
-                    <option key={customer.Customer_ID} value={customer.Customer_ID}>
-                      {customer.First_Name} {customer.Last_Name} · ID {customer.Customer_ID}
-                      {customer.Email ? ` · ${customer.Email}` : ""}
-                    </option>
-                  ))}
-                </select>
-                {customersError && (
-                  <span className="mt-1 block text-xs text-red-600">{customersError}</span>
-                )}
-              </label>
+              <div>
+  <div className="flex items-center justify-between">
+    <label className="block text-sm font-medium text-slate-700">
+      Customer
+    </label>
+
+    <button
+      type="button"
+      onClick={() => setShowAddCustomer(true)}
+      className="text-sm font-medium text-blue-600 hover:text-blue-800"
+    >
+      + Add Customer
+    </button>
+  </div>
+
+  <select
+    name="customerId"
+    required
+    defaultValue=""
+    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3"
+  >
+    <option value="" disabled>
+      Select a customer
+    </option>
+
+    {customers.map((customer) => (
+      <option
+        key={customer.Customer_ID}
+        value={customer.Customer_ID}
+      >
+        {customer.First_Name} {customer.Last_Name}
+      </option>
+    ))}
+  </select>
+</div>
               <label className="block text-sm font-medium text-slate-700">Vehicle
                 <select name="vehicleId" required defaultValue="" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 font-normal">
                   <option value="" disabled>Select a vehicle</option>
@@ -1022,6 +1060,118 @@ export default function Home() {
           </div>
         </div>
       )}
+      {showAddCustomer && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold">Add Customer</h2>
+
+        <button
+          type="button"
+          onClick={() => setShowAddCustomer(false)}
+          className="text-xl"
+        >
+          ×
+        </button>
+      </div>
+
+      <form
+  className="mt-6 space-y-4"
+  onSubmit={async (e) => {
+    e.preventDefault();
+
+    try {
+      const response = await fetch("/api/customers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+  licenseNo: newCustomer.licenseNo,
+  firstName: newCustomer.firstName,
+  lastName: newCustomer.lastName,
+  email: newCustomer.email,
+}),
+      });
+
+      if (!response.ok) {
+        alert("Failed to add customer");
+        return;
+      }
+
+      const createdCustomer = await response.json();
+      setCustomers((prev) => [...prev, createdCustomer]);
+
+setShowAddCustomer(false);
+
+setNewCustomer({
+  licenseNo: "",
+  firstName: "",
+  lastName: "",
+  email: "",
+});
+    } catch (err) {
+      console.error(err);
+      alert("Error adding customer");
+    }
+  }}
+>
+        <input
+  placeholder="First Name"
+  value={newCustomer.firstName}
+  onChange={(e) =>
+    setNewCustomer({ ...newCustomer, firstName: e.target.value })
+  }
+  className="w-full rounded-xl border px-3 py-3"
+/>
+
+        <input
+  placeholder="Last Name"
+  value={newCustomer.lastName}
+  onChange={(e) =>
+    setNewCustomer({ ...newCustomer, lastName: e.target.value })
+  }
+  className="w-full rounded-xl border px-3 py-3"
+/>
+
+        <input
+  placeholder="Email"
+  value={newCustomer.email}
+  onChange={(e) =>
+    setNewCustomer({ ...newCustomer, email: e.target.value })
+  }
+  className="w-full rounded-xl border px-3 py-3"
+/>
+
+        <input
+  placeholder="License Number"
+  value={newCustomer.licenseNo}
+  onChange={(e) =>
+    setNewCustomer({ ...newCustomer, licenseNo: e.target.value })
+  }
+  className="w-full rounded-xl border px-3 py-3"
+/>
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setShowAddCustomer(false)}
+            className="flex-1 rounded-xl border py-3"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            className="flex-1 rounded-xl bg-[#172541] py-3 text-white"
+          >
+            Add Customer
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+)}
     </main>
   );
 }
