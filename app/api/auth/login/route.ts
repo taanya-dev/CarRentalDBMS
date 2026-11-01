@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     const [rows] = await pool.execute(
       `SELECT User_ID, Username, Password_Hash, Role
        FROM App_User
-       WHERE Username = ? AND Is_Active = TRUE
+       WHERE Username = ? 
        LIMIT 1`,
       [username]
     );
